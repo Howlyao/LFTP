@@ -1,261 +1,225 @@
 package lftp;
 
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import java.nio.file.NoSuchFileException;
 import java.util.LinkedList;
 import java.util.Timer;
 
 import lftp.Packet.PacketType;
 
-
-//文件数据发送类
-public class DataSender {
-	
-	private int rwnd;								//接受窗口大小
-	private int cwnd;								//拥塞窗口大小
-	private int lastSentIndex;						//最后送的数据包索引
-	private int lastAckIndex;						//最后ACK的数据包索引
-	
-	private int filePacketCount;					//文件数据包的数量
-	private int sendTime = 1;
-	private LinkedList<Integer> ackedList;			//ACK 链表
-	private FilePacketsManager filePacketsManager;	//文件管理对象
-	
-	private DatagramSocket datagramSocket;			//Socket
-	private int receiverPort;							//数据端口
-	private InetAddress address;					//服务器IP地址
-	private Thread sender;							//发送文件数据包线程
-	private Thread receiver;						//接受ACK线程
-	
-	//构造函数
-	public DataSender(DatagramSocket datagramSocket,InetAddress address,int receiverPort,int rwnd,FilePacketsManager filePacketsManager) {
-		initial(address,receiverPort,rwnd,filePacketsManager);
-		this.datagramSocket = datagramSocket;
-	
-	}
+public class LFTPClient implements Runnable {
 	
 	
-	public DataSender(int dataPort,InetAddress address,int receiverPort,int rwnd,FilePacketsManager filePacketsManager) {
+	private BufferedReader br;								//字符缓冲输入流
+	private final int CONTROL_PORT = 1025;					//服务器控制端口
+	private final int MAX_LENGTH = 30024;					//接受缓冲区和数据报文的最大长度
+	private final int TIMEOUT = 50000;						//请求服务端的超时时间
+	
+	private int clientPort;									//客户端端口
+															
+	private DatagramSocket datagramSocket = null;			//Socket
+	private DatagramPacket datagramPacket = null;			//Packet
+	
+	private byte[] rcvBuffer;								//接受缓冲区
+	
+	//客户端构造函数
+	public LFTPClient(int port) {
 		
-		initial(address, receiverPort, rwnd, filePacketsManager);
+		//接受键盘输入的字符缓冲输入流
+		br = new BufferedReader(new InputStreamReader(System.in)); 
+		setClientPort(port);
+		//端口与Socket绑定
 		try {
-			datagramSocket = new DatagramSocket(dataPort);
-		} catch(Exception e) {
-			e.printStackTrace();
-		}
-		
-	}
-	
-	public void initial(InetAddress address,int receiverPort,int rwnd,FilePacketsManager filePacketsManager) {
-		//变量对象初始化
-		
-		this.address = address;
-		this.receiverPort = receiverPort;
-		this.rwnd = rwnd;
-		this.cwnd = 1;
-		this.filePacketsManager = filePacketsManager;
-		this.filePacketCount = filePacketsManager.getPacketCount();
-		ackedList = new LinkedList<>();
-		
-		
-		lastSentIndex = -1;
-		lastAckIndex = -1;
-	}
-	
-	public void start(boolean flag) {
-
-		try  {
-			//开启发送线程和接受线程
-			sender = new Thread(new Sender());
-			receiver = new Thread(new Receiver());
-			sender.start();
-			receiver.start();
-			//等待线程结束
-			if (flag) {
-				sender.join();
-				receiver.join();
-			}
-				
-			
-		}catch(Exception e) {
-			
-			e.printStackTrace();
-		}
-		
-	}
-	
-	//发送对应SequenceNum的文件数据包
-	void sendPacket(int sequenceNum){
-		//从文件管理对象获取对应SequenceNum的数据
-		byte[] data = filePacketsManager.getFilePacket(sequenceNum);
-		Packet packet = new Packet(data,PacketType.DATA,sequenceNum);
-		
-		//DatagramPacket
-		DatagramPacket datagramPacket = new DatagramPacket(packet.getPacketBytes(), packet.getPacketSize(),address,receiverPort);
-		
-		try {
-			
-			
-			//setTimeout  设置超时机制
-			Timer timer = new Timer();
-			
-			//超时后的处理
-			timer.schedule(new PacketTimerTask(sequenceNum) {
-				
-				public void run() {
-					int sequenceNum1 = this.getSequenceNum();
-					System.out.println("timeout + " + sequenceNum1);
-					try{
-						//sender.sleep(1);
-						sendPacket(sequenceNum1);
-						cwnd = 1;
-									
-					}catch(Exception e) {
-						e.printStackTrace();
-					}
-				}
-			}, 500);
-			
-			//将Timer和SequenceNum映射，添加至哈希表
-			filePacketsManager.timerMap.remove(sequenceNum);
-			filePacketsManager.timerMap.put(sequenceNum, timer);
-			//System.out.println("set Timeout with sequenceNum " + sequenceNum);
-			
-			//sender.sleep(1);
-			//System.out.println("send packet with sequenceNum: " + sequenceNum);
-			datagramSocket.send(datagramPacket);
-			
-			
-			
-			
-			
-		} catch(IOException e) {
-			e.printStackTrace();
-		} catch(Exception e) {
+			datagramSocket = new DatagramSocket(clientPort);
+		} catch(SocketException e) {
 			e.printStackTrace();
 		}
 	}
-//	LFTP lsend 127.0.0.1 d:/hah.jpg
 	
-	
-	//发送线程类
-	class Sender implements Runnable {
+	//客户端线程运行函数
+	public void run() {
 		
-		
-		public void run() {
-			//lastAckIndex < filePacketCount - 1 &&
+		while (true) {
 			
-			//循环发送文件数据报文
-			while (lastSentIndex < filePacketCount - 1) {
-				
-				try {
-					//流控制
-					//lastSentIndex - lastAckIndex == 接受方
-					if (lastSentIndex - lastAckIndex <= rwnd) {
-						
-						//SequenceNum++,发送对应的文件数据包
-						lastSentIndex++;
-						sendPacket(lastSentIndex);
-						//拥塞控制	
-						sendTime = 1000 - cwnd;
-						sendTime = sendTime <= 0 ? 1: sendTime;
-						cwnd = (cwnd >= 1000 ? 999 : cwnd * 2);
-						Thread.sleep(sendTime);
-						
-					} else {
-						Thread.sleep(1);
-						
-					}
-				}catch(Exception e) {
-					e.printStackTrace();
-				}
-				
-			}
-		
-			System.out.println("finish");		
-		}
-
-	}
-	
-
-	//LFTP lsend 127.0.0.1 d:/truthDare.mkv
-	//LFTP lsend 127.0.0.1 d:/1_1.bmp
-	
-	//接受线程类 ACK接受
-	class Receiver implements Runnable {
-		
-		private byte[] rcvBuf = new byte[64];
-		private DatagramPacket datagramPacket;
-		
-		//
-		public void run() {
-			
-			
-			//LFTP lget 127.0.0.1 xx.bmp
-			datagramPacket = new DatagramPacket(rcvBuf, rcvBuf.length);
 			try {
-			
-				//循环->lastAckIndex 等于 文件最后 一个数据包的索引
-				while (lastAckIndex < filePacketCount - 1) {
+				//获取用户指令,lsend or lget
+				System.out.println("please input command");
+				String command = br.readLine();
+				StringBuilder ins = new StringBuilder("");
+				InetAddress address = InetAddress.getByName("127.0.0.1");
+				StringBuilder largeFile = new StringBuilder("");
+				
+				if(commandAnalyze(command,ins,address,largeFile)) {
 					
-					//接受ACK数据报    Socket获取Packet
-					datagramSocket.receive(datagramPacket);
+					//向服务器发送文件命令
+					if (ins.toString().equals("lsend")) {
 						
-					//Packet分析
-					Packet packet = new Packet(datagramPacket.getData());
-					//RcvWindow 接受窗口大小更新
-					int windowSize = packet.getRcvWindow();
-					rwnd = windowSize;
-					//数据报AckNum
-					int ackNum = packet.getAckNum();
-					//System.out.println("receive ackNum: " + ackNum);
-					
-					//如果该AckNum对应的Timer不为空时，取消Timer
-					if (filePacketsManager.timerMap.get(ackNum) != null) {
-						filePacketsManager.timerMap.get(ackNum).cancel(); 
-						filePacketsManager.timerMap.remove(ackNum);
-					} 
-					
-					
-					
-					//接受冗余AckNum报文
-					if (ackedList.contains(ackNum)) {
-						//do nothing
-					//ackNum大于期望ackNum，添加至链表
-					} else if (ackNum > lastAckIndex + 1) {				
-						ackedList.add(ackNum);
+						//取出发送文件，并对文件进行处理
+						FilePacketsManager filePacketsManager = new FilePacketsManager(largeFile.toString());
 						
-					//ackNum等于期望ackNum,更新lastAckIndex
-					} else if (ackNum == lastAckIndex + 1) {
+						int fileSize = filePacketsManager.getFileSize();
+						String fileName =filePacketsManager.getFileName();
+						//输出提示信息
+						System.out.println("Client: Ready to send the file:" + largeFile.toString() + " with size : " + fileSize);
 						
-						ackedList.add(ackNum);
-						while (ackedList.contains(ackNum)) {
-							ackNum++;
-						}
 						
-						lastAckIndex = ackNum - 1;
+						//关于发送文件命令以及文件名字的数据包
+						Packet packet = new Packet(fileName.getBytes(),Packet.PacketType.LSEND);
+						byte[] packetBytes = packet.getPacketBytes();
+						
+						
+						//向服务器请求建立数据连接
+						datagramPacket = new DatagramPacket(packetBytes, packetBytes.length, address, CONTROL_PORT);
+						datagramSocket.send(datagramPacket);
+						
+						//设置接受的超时时间
+						datagramSocket.setSoTimeout(TIMEOUT);
+						
+						//从服务器得到数据传输的端口号，以及接受窗口大小
+						rcvBuffer = new byte[MAX_LENGTH];
+						datagramPacket = new DatagramPacket(rcvBuffer, rcvBuffer.length);
+						datagramSocket.receive(datagramPacket);
+						
+						//分析数据报文
+						packet = new Packet(datagramPacket.getData());
+						int dataPort = packet.getDataPort();
+						int rwnd = packet.getRcvWindow();
+					
+						System.out.println("Client: dataPort: " + dataPort + " rcvWindowSize: " + rwnd);
+						
+						//构造负责数据传输的处理类
+						DataSender dataSender = new DataSender(datagramSocket,address,dataPort, rwnd,filePacketsManager);	
+						dataSender.start(true);
+						
+						
+					} else if (ins.toString().equals("lget")) {
+						
+						String fileName = largeFile.toString();
+						//关于接受文件命令以及文件名字的数据包, 设置RcvWindow
+						int rcvWindow = 1000;
+						Packet packet = new Packet(fileName.getBytes(), Packet.PacketType.LGET, rcvWindow);
+						byte[] packetBytes = packet.getPacketBytes();
+						
+						//发送LGET类型数据报
+						datagramPacket = new DatagramPacket(packetBytes, packetBytes.length,address,CONTROL_PORT);
+						datagramSocket.send(datagramPacket);
+						
+						//接受数据传输初始数据，以及服务器的数据端口
+						rcvBuffer = new byte[MAX_LENGTH];
+						datagramPacket = new DatagramPacket(rcvBuffer, rcvBuffer.length);
+						datagramSocket.receive(datagramPacket);
+						packet = new Packet(datagramPacket.getData());
+						int dataPort = packet.getDataPort();
+						
+						
+						//设置存储路径
+						String filePath = "d:/ClientStorage/" + fileName;
+						//发送一个数据包缓冲
+						datagramSocket.send(datagramPacket);
+						
+						
+						//构造数据传输接受类
+						DataReceiver dataReceiver = new DataReceiver(filePath, datagramSocket, address, dataPort, rcvWindow);
+						dataReceiver.start();
 						
 					}
-						
-		
+					
+					
+				} else if (command.equals("exit")){
+					//退出客户端
+					break;
+				} else {
+
+					//输错指令
+					continue;
 				}
 				
-			
-				//完成文件发送
-				System.out.println("finish sending file");
-				//发送ACKALL类型报文，提示服务器停止接受
-				Packet endPacket = new Packet(null,PacketType.ACKALL);
-				datagramPacket = new DatagramPacket(endPacket.getPacketBytes(), endPacket.getPacketSize(),address,receiverPort);
-				datagramSocket.send(datagramPacket);
+			} catch(FileNotFoundException e) {
+				System.out.println("File not Found\n"
+						+ "please input the command again");
 				
+			} catch(SocketTimeoutException e) {
+				System.out.println("Timeout,please try inputing the command again");
 				
-				} catch(IOException e) {
-					e.printStackTrace();
-				}
+			}catch(NoSuchFileException e) {
+				System.out.println("File not Found\n"
+						+ "please input the command again");
+			}catch(IOException e) {
+				e.printStackTrace();
 				
 			}
 			
 		}
+		
+		datagramSocket.close();
+		System.exit(0);
+		
 	}
+	public void setClientPort(int port) {
+		this.clientPort = port;
+	}
+	
+	//命令分析
+	public boolean commandAnalyze(String command,StringBuilder ins,InetAddress address,StringBuilder largeFile) {
+		
+		if (command.equals("exit")) return false;
+		
+		//分离参数
+		String[] arr = command.split(" ");
+		
+		//判断是否为规范的命令
+		if (arr.length < 4) {
+			System.out.println("please input correct format of command\n"
+					+ "like LFTP ins myserver largeFile");
+			return false;
+		}
+		
+		
+		if (!arr[0].equals("LFTP")) {
+			System.out.println("please input correct format of command\n"
+					+ "like LFTP ins myserver largeFile");
+			
+			return false;
+		}
+		
+		if (!arr[1].equals("lsend") && !arr[1].equals("lget")) {
+			System.out.println("Incorrect instruction\n"
+					+ "Correct instructions:lsend or lget");
+			return false;
+		}
+		ins.append(arr[1]);
+		
+		try{
+			address = InetAddress.getByName(arr[2]);
+			
+		} catch(UnknownHostException e) {
+			System.out.println("Incorrest address");
+			return false;
+		}
+		
+		largeFile.append(arr[3]);
+		
+		return true;
+	}
+	
+	
+	
+	
+
+
+
+	public static void main(String []args) {
+		
+		Thread b = new Thread(new LFTPClient(1026));
+		b.start();
+	}
+}
