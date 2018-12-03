@@ -11,6 +11,7 @@ import java.net.InetAddress;
 import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -20,7 +21,7 @@ import lftp.Packet.PacketType;
 
 public class LFTPServer implements Runnable{
 	
-	private final int MAX_LENGTH = 30024;				//UDP数据报的长度最值
+	private final int MAX_LENGTH = Packet.MAX_LENGTH;				//UDP数据报的长度最值
 	private final int CONTROL_PORT = 1025;				//服务器控制端口
 	private final int MAX_PORT = 65535;					//数据端口的最大值
 	private final int MIN_PORT = 1026;					//数据端口的最小值
@@ -30,6 +31,8 @@ public class LFTPServer implements Runnable{
 	
 	private DatagramSocket datagramSocket;				//Socket
 	
+	private InetAddress address;						//客户端IP地址
+	private int client_port;							//客户端端口
 	
 	public LFTPServer() {
 		
@@ -69,8 +72,8 @@ public class LFTPServer implements Runnable{
 				
 				
 				//获取客户端的地址和端口信息
-				InetAddress address = datagramPacket.getAddress();
-				int client_port = datagramPacket.getPort();
+				address = datagramPacket.getAddress();
+				client_port = datagramPacket.getPort();
 				System.out.println("Server: Reveice request from " + address.toString());
 				
 				//随机分配数据端口给客户端
@@ -126,8 +129,23 @@ public class LFTPServer implements Runnable{
 					dataSender.start(false);
 				}
 				
-			} catch(IOException e) {
-				e.printStackTrace();
+			}catch(InvalidPathException e) {
+				System.out.println("File does not exist");
+				System.out.println("Send Reject packet to Client");
+				
+				Packet packet = new Packet(null,PacketType.REJECT);
+				sendBuf = packet.getPacketBytes();
+				DatagramPacket sendPacket = new DatagramPacket(sendBuf,sendBuf.length,address,client_port);
+				try {
+					datagramSocket.send(sendPacket);
+				}catch(Exception ex) {
+					System.out.println("Server: Fail to send packet");
+				}
+				
+				
+			}
+			catch(IOException e) {
+				System.out.println("Server: Fail to read file");
 			}
 			
 		}

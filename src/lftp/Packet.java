@@ -27,7 +27,8 @@ public class Packet {
 		LSEND(2),			//发送文件命令报文
 		LGET(3),			//下载命令报文
 		ACK(4),				//ACK报文
-		ACKALL(5);			//ACKALL报文
+		ACKALL(5),			//ACKALL报文
+		REJECT(6);			//REJECT报文
 		
 		private short value;//枚举值
 		
@@ -61,13 +62,13 @@ public class Packet {
 		encode(data,type,options);
 		decode(packetBytes);
 	}
-	
+	//sequence(4),ack(4),type(2),headerSize(2),checksum(4),rcvWindow(4),dataSize(4),options()
 	//数据报解析
 	public void decode(byte[] packetBytes) {
 		//数据报文头的长度
-		short headerSize = ByteBuffer.wrap(packetBytes, 22, 2).getShort();
+		short headerSize = ByteBuffer.wrap(packetBytes, 10, 2).getShort();
 		//数据的长度
-		int dataSize = ByteBuffer.wrap(packetBytes, 18, 4).getInt();
+		int dataSize = ByteBuffer.wrap(packetBytes, 20, 4).getInt();
 		
 		//数据报文的总长度
 		packetSize = headerSize + dataSize;
@@ -81,7 +82,7 @@ public class Packet {
 			
 		} else if (packetType == PacketType.INITIALTRANSFER) {
 			//获取数据报文中的RcvWindow信息
-			rcvWindow = ByteBuffer.wrap(packetBytes, 14, 4).getInt();
+			rcvWindow = ByteBuffer.wrap(packetBytes, 16, 4).getInt();
 			//获取数据报文中的dataPort信息  数据传输端口
 			setDataPort(ByteBuffer.wrap(packetBytes,24,4).getInt());
 			
@@ -89,7 +90,7 @@ public class Packet {
 			
 			//获取数据报文中的SequenceNum,checksum,dataBytes（数据字节流）
 			sequenceNum = ByteBuffer.wrap(packetBytes,0,4).getInt();	
-			checksum = ByteBuffer.wrap(packetBytes,10,4).getInt();
+			checksum = ByteBuffer.wrap(packetBytes,12,4).getInt();
 			dataBytes = Arrays.copyOfRange(packetBytes, headerSize, packetSize);
 			
 			//数据检验
@@ -100,13 +101,13 @@ public class Packet {
 		} else if (packetType == PacketType.ACK) {
 			//获取数据报文中的AckNum和RcvWindow数值
 			ackNum = ByteBuffer.wrap(packetBytes,4,4).getInt();
-			rcvWindow = ByteBuffer.wrap(packetBytes, 14, 4).getInt();
+			rcvWindow = ByteBuffer.wrap(packetBytes, 16, 4).getInt();
 			
 		} else if (packetType == PacketType.LGET) {
 			
-			rcvWindow = ByteBuffer.wrap(packetBytes, 14, 4).getInt();
+			rcvWindow = ByteBuffer.wrap(packetBytes, 16, 4).getInt();
 			dataBytes = Arrays.copyOfRange(packetBytes, headerSize, packetSize);
-		}
+		} 
 		
 	}
 	
@@ -114,45 +115,35 @@ public class Packet {
 	public void encode(byte[] data,PacketType type,int  ...options) {
 		//默认的头信息长度
 		
-		//sequence(4),ack(4),type(2),checksum(4),rcvWindow(4),dataSize(4),headerSize(2),options();
+		//sequence(4),ack(4),type(2),headerSize(2),checksum(4),rcvWindow(4),dataSize(4),options();
 		//头长度
 		short headerSize = 0;
 		headerSize += defaultHeaderSize;
 		
 		
-		//传送数据
-		byte[] sendData = null;
-		
-		
-		if (data != null) {
-			sendData = new byte[data.length];
-			System.arraycopy(data,0,sendData,0,data.length);
-		}
-		
-		
 		 ByteBuffer byteBuffer;
 		 //根据数据报文的不同类型，将不同数据信息加入至数据报文
 		 if (type == PacketType.LSEND ) {
-			 byteBuffer = putInBuffer(0, 0, type,0,headerSize,sendData);
+			 byteBuffer = putInBuffer(0, 0, type,0,headerSize,data);
 			 
 			 
 		 } else if (type == PacketType.INITIALTRANSFER) {
 			 headerSize += 4;
-			 byteBuffer = putInBuffer( 0, 0, type, options[0], headerSize, sendData, options[1]);
+			 byteBuffer = putInBuffer( 0, 0, type, options[0], headerSize, data, options[1]);
 			 
 		 } else if(type == PacketType.LGET) {
 			 
-			 byteBuffer = putInBuffer( 0, 0, type, options[0], headerSize, sendData);
+			 byteBuffer = putInBuffer( 0, 0, type, options[0], headerSize, data);
 		 }
 		 else if (type == PacketType.ACK){
-			 byteBuffer = putInBuffer( 0, options[0], type, options[1], headerSize, sendData);
+			 byteBuffer = putInBuffer( 0, options[0], type, options[1], headerSize, data);
 			 
 		 } else if (type == PacketType.DATA){
-			 byteBuffer = putInBuffer(options[0], 0, type, 0, headerSize, sendData);
+			 byteBuffer = putInBuffer(options[0], 0, type, 0, headerSize, data);
 			 
 	 
 		 } else {
-			 byteBuffer = putInBuffer(0, 0, type, 0, headerSize, sendData);
+			 byteBuffer = putInBuffer(0, 0, type, 0, headerSize, data);
 		 }
 		
 		 //数据报文的字节流数组
@@ -174,6 +165,9 @@ public class Packet {
 		byteBuffer.putInt(sequenceNum);		
 		byteBuffer.putInt(ackNum);			
 		byteBuffer.putShort(type.getValue());	//数据包类型
+		
+		byteBuffer.putShort(headerSize);		//头长度
+				
 		byteBuffer.putInt(calculateChecksum(data));	//数据checksum
 		byteBuffer.putInt(rcvWindow);		
 		
@@ -185,13 +179,12 @@ public class Packet {
 			byteBuffer.putInt(0);
 		}
 		
-		//头长度
-		byteBuffer.putShort(headerSize);
 		
 		//options
 		for (int i:options) {
 			byteBuffer.putInt(i);
 		}
+		
 		
 		//data
 		if(data != null) {
