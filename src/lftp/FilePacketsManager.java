@@ -2,6 +2,7 @@ package lftp;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
@@ -13,7 +14,7 @@ import java.util.Timer;
 public class FilePacketsManager {
 	
 	public static int packetSize = Packet.MAX_LENGTH;	
-	public static int packetHeaderSize = 24;//UDP数据包的头长度
+	public static int packetHeaderSize = Packet.defaultHeaderSize;//UDP数据包的头长度
 	
 	private int fileSize;					//文件大小
 	private int dataSize;					//数据报文的数据长度
@@ -22,7 +23,7 @@ public class FilePacketsManager {
 	private String fileName;
 	public Map<Integer,Timer> timerMap;		//数据报索引与定时器的哈希表
 	private byte[] fileBytes;				//文件的字节流数组
-	public FilePacketsManager(String largeFilePath) throws IOException{
+	public FilePacketsManager(String largeFilePath) throws InvalidPathException,IOException{
 		
 		//获取文件的名字
 		int last = largeFilePath.lastIndexOf("/");
@@ -30,9 +31,11 @@ public class FilePacketsManager {
 		
 		
 		//得到文件后，讲文件转换至字节流数组
+		
 		Path path = Paths.get(largeFilePath);
 		fileBytes = Files.readAllBytes(path);
 		
+
 		//文件字节大小
 		fileSize = fileBytes.length;
 		System.out.println("fileSize: " + fileSize);
@@ -46,6 +49,9 @@ public class FilePacketsManager {
 		
 		System.out.println("Packetcount: " + packetCount);
 		timerMap = new HashMap<>();
+		
+		
+		
 
 	}
 	

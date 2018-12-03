@@ -70,6 +70,7 @@ public class DataReceiver {
 	public void start() {
 		Thread thread = new Thread(new Receiver());
 		thread.start();
+	
 	}
 	
 	
@@ -105,9 +106,14 @@ public class DataReceiver {
 				
 				try {
 					//获取数据报
-					datagramSocket.receive(rcvDatagramPacket);					
+					datagramSocket.receive(rcvDatagramPacket);	
+					
+					address = rcvDatagramPacket.getAddress();
+					senderPort = rcvDatagramPacket.getPort();
+					
 					//数据报分析
 					Packet packet = new Packet(rcvDatagramPacket.getData());
+					
 					
 					//接受ACKALL类型数据包，退出循环
 					if (packet.getPacketType() == PacketType.ACKALL) {

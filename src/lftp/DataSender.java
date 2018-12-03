@@ -13,6 +13,10 @@ import lftp.Packet.PacketType;
 //文件数据发送类
 public class DataSender {
 	
+	private final int RWND_THRESHOLD = 1000;		//sleepTime = RWND_THRESHOLD - cwnd	
+	private final int MAX_RWND = 995;				//rwnd最大值
+	private final int MIN_SLEEPTIME = 5;			//最小的睡眠时间
+	private int threshold;							//拥塞控制变量
 	private int rwnd;								//接受窗口大小
 	private int cwnd;								//拥塞窗口大小
 	private int lastSentIndex;						//最后送的数据包索引
@@ -58,7 +62,7 @@ public class DataSender {
 		this.filePacketsManager = filePacketsManager;
 		this.filePacketCount = filePacketsManager.getPacketCount();
 		ackedList = new LinkedList<>();
-		
+		this.threshold = 500;
 		
 		lastSentIndex = -1;
 		lastAckIndex = -1;
@@ -94,7 +98,7 @@ public class DataSender {
 		
 		//DatagramPacket
 		DatagramPacket datagramPacket = new DatagramPacket(packet.getPacketBytes(), packet.getPacketSize(),address,receiverPort);
-		
+//		System.out.println(address.toString() + " " + receiverPort);
 		try {
 			
 			
@@ -106,17 +110,18 @@ public class DataSender {
 				
 				public void run() {
 					int sequenceNum1 = this.getSequenceNum();
-					System.out.println("timeout + " + sequenceNum1);
+					System.out.println(sequenceNum1 + " packet timeout");
 					try{
-						//sender.sleep(1);
+						sender.sleep(10);
 						sendPacket(sequenceNum1);
-						cwnd = 1;
+						cwnd /= 2;
+						if (cwnd <= 0 ) cwnd = 1;
 									
 					}catch(Exception e) {
 						e.printStackTrace();
 					}
 				}
-			}, 500);
+			}, 1500);
 			
 			//将Timer和SequenceNum映射，添加至哈希表
 			filePacketsManager.timerMap.remove(sequenceNum);
@@ -139,7 +144,7 @@ public class DataSender {
 	}
 //	LFTP lsend 127.0.0.1 d:/hah.jpg
 	
-	
+//	LFTP lget 127.0.0.1 d:/hah.jpg
 	//发送线程类
 	class Sender implements Runnable {
 		
@@ -152,16 +157,24 @@ public class DataSender {
 				
 				try {
 					//流控制
+					
 					//lastSentIndex - lastAckIndex == 接受方
 					if (lastSentIndex - lastAckIndex <= rwnd) {
-						
+
 						//SequenceNum++,发送对应的文件数据包
 						lastSentIndex++;
 						sendPacket(lastSentIndex);
-						//拥塞控制	
-						sendTime = 1000 - cwnd;
-						sendTime = sendTime <= 0 ? 1: sendTime;
-						cwnd = (cwnd >= 1000 ? 999 : cwnd * 2);
+						
+						//拥塞控制
+						sendTime = RWND_THRESHOLD - cwnd;
+						sendTime = sendTime <= MIN_SLEEPTIME ? MIN_SLEEPTIME: sendTime;
+						
+						//当cwnd >= threshold,cwnd开始线性增长
+						if (cwnd >= threshold) cwnd += 1;
+						else cwnd *= 2;
+						
+						cwnd = (cwnd >= MAX_RWND ? MAX_RWND : cwnd);
+						
 						Thread.sleep(sendTime);
 						
 					} else {
@@ -174,15 +187,15 @@ public class DataSender {
 				
 			}
 		
-			System.out.println("finish");		
 		}
 
 	}
 	
-
-	//LFTP lsend 127.0.0.1 d:/truthDare.mkv
-	//LFTP lsend 127.0.0.1 d:/1_1.bmp
-	
+	//LFTP lsend 120.77.206.16 d:/hah.jpg
+	//LFTP lsend 120.77.206.16 d:/truthDare.mkv
+	//LFTP lsend 120.77.206.16 d:/1_1.bmp
+	//LFTP lsend 120.77.206.16 d:/3.bmp
+//	LFTP lsend 120.77.206.16 d:/OverWatch.exe
 	//接受线程类 ACK接受
 	class Receiver implements Runnable {
 		
@@ -203,6 +216,7 @@ public class DataSender {
 					//接受ACK数据报    Socket获取Packet
 					datagramSocket.receive(datagramPacket);
 						
+					
 					//Packet分析
 					Packet packet = new Packet(datagramPacket.getData());
 					//RcvWindow 接受窗口大小更新
@@ -214,6 +228,7 @@ public class DataSender {
 					
 					//如果该AckNum对应的Timer不为空时，取消Timer
 					if (filePacketsManager.timerMap.get(ackNum) != null) {
+						
 						filePacketsManager.timerMap.get(ackNum).cancel(); 
 						filePacketsManager.timerMap.remove(ackNum);
 					} 
