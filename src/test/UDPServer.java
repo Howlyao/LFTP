@@ -17,7 +17,7 @@ public class UDPServer {
 	private DatagramSocket datagramSocket;
 	
 	private DatagramPacket datagramPacket;
-	
+	//
 	public UDPServer() {
 		
 		try {

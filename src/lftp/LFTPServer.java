@@ -87,7 +87,7 @@ public class LFTPServer implements Runnable{
 					
 					//获取文件名以及设定存储位置
 					String fileName = new String(connectPacket.getDataBytes());
-					String saveFilePath = "d:/ServerStorage/" + fileName;
+					String saveFilePath = "./" + fileName;
 		
 					
 					//发送数据传输的端口信息
@@ -106,7 +106,7 @@ public class LFTPServer implements Runnable{
 				} else if (connectPacket.getPacketType() == PacketType.LGET) {
 					//获取文件名
 					String fileName = new String(connectPacket.getDataBytes());
-					String filePath = "d:/ServerStorage/" + fileName;
+					String filePath = "./" + fileName;
 					
 					//构造文件数据管理对象
 					FilePacketsManager filePacketsManager = new FilePacketsManager(filePath);
