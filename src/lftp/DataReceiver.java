@@ -12,6 +12,8 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
 
+import lftp.DataSender.Receiver;
+import lftp.DataSender.Sender;
 import lftp.Packet.PacketType;
 
 //文件数据发送类
@@ -67,9 +69,23 @@ public class DataReceiver {
 	}
 	
 	//开启接受数据包的线程
-	public void start() {
-		Thread thread = new Thread(new Receiver());
-		thread.start();
+	public void start(boolean flag) {
+
+		try  {
+			//开启接受线程
+			Thread thread = new Thread(new Receiver());
+			thread.start();
+			//等待线程结束
+			if (flag) {
+				thread.join();
+			}
+				
+			
+		}catch(Exception e) {
+			
+			e.printStackTrace();
+		}
+		
 	
 	}
 	
@@ -123,7 +139,7 @@ public class DataReceiver {
 					
 					//获取SequenceNum
 					int sequenceNum = packet.getSequenceNum();
-					//System.out.println("Server: receive a packet with sequenceNum: " + sequenceNum);
+					System.out.println("Receive a packet with sequenceNum: " + sequenceNum);
 					
 					//判断数据报是否出错
 					if (packet.isValidPacket()) {
@@ -132,7 +148,7 @@ public class DataReceiver {
 					} else {
 						
 						//输出提示信息
-						System.out.println("packet " + sequenceNum + " corrupt");
+						System.out.println("Packet " + sequenceNum + " corrupt");
 					}
 				
 					
@@ -170,7 +186,7 @@ public class DataReceiver {
 			byte[] data = packet.getDataBytes();
 			
 			//发送Ack
-			System.out.println("send a ack packet with ackNum: " + sequenceNum);
+			System.out.println("Send a ack packet with ackNum: " + sequenceNum);
 			sendAck(sequenceNum);
 			
 			//当没有接受相同索引的包时

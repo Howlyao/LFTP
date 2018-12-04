@@ -6,7 +6,7 @@ import java.util.Arrays;
 public class Packet {
 	
 	public static int defaultHeaderSize = 24;
-	public static final int MAX_LENGTH = 30024;
+	public static final int MAX_LENGTH = 1472;
 	private int checksum;
 	private int packetSize;
 	private int sequenceNum;

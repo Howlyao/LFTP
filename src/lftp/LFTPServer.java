@@ -91,7 +91,7 @@ public class LFTPServer implements Runnable{
 		
 					
 					//发送数据传输的端口信息
-					int windowSize = 1000;
+					int windowSize = 100;
 					Packet packet = new Packet(null,PacketType.INITIALTRANSFER,windowSize,data_port);
 					sendBuf = packet.getPacketBytes();
 					DatagramPacket sendPacket = new DatagramPacket(sendBuf,sendBuf.length,address,client_port);
@@ -100,7 +100,7 @@ public class LFTPServer implements Runnable{
 					//构造数据接受对象
 					System.out.println("Server: Ready to receive a file: " + fileName);
 					DataReceiver dataReceiver = new DataReceiver(saveFilePath,data_port,address,client_port,windowSize);
-					dataReceiver.start();
+					dataReceiver.start(false);
 					
 					
 				} else if (connectPacket.getPacketType() == PacketType.LGET) {
@@ -122,16 +122,23 @@ public class LFTPServer implements Runnable{
 					datagramSocket.send(sendPacket);
 					
 					//接受数据报，缓冲
+					DatagramSocket sendSocket = new DatagramSocket(data_port);
 					datagramPacket = new DatagramPacket(recvBuf,recvBuf.length);
-					datagramSocket.receive(datagramPacket);
+					sendSocket.receive(datagramPacket);
 					
-					DataSender dataSender = new DataSender(data_port, address, client_port, rcvWindow, filePacketsManager);
+					//得到与该数据端口相连的客户端地址和端口，针对阿里云服务器数据传输
+					client_port = datagramPacket.getPort();
+					address = datagramPacket.getAddress();
+					System.out.println("Server: Ready to send file: " + fileName);
+					
+					//开启文件传输的线程
+					DataSender dataSender = new DataSender(sendSocket, address, client_port, rcvWindow, filePacketsManager);
 					dataSender.start(false);
 				}
 				
 			}catch(InvalidPathException e) {
-				System.out.println("File does not exist");
-				System.out.println("Send Reject packet to Client");
+				System.out.println("Server: File does not exist");
+				System.out.println("Server: Send Reject packet to Client");
 				
 				Packet packet = new Packet(null,PacketType.REJECT);
 				sendBuf = packet.getPacketBytes();

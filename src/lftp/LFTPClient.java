@@ -21,8 +21,8 @@ public class LFTPClient implements Runnable {
 	
 	private BufferedReader br;								//字符缓冲输入流
 	private final int CONTROL_PORT = 1025;					//服务器控制端口
-	private final int MAX_LENGTH = 30024;					//接受缓冲区和数据报文的最大长度
-	private final int TIMEOUT = 50000;						//请求服务端的超时时间
+	private final int MAX_LENGTH = Packet.MAX_LENGTH;					//接受缓冲区和数据报文的最大长度
+	private final int TIMEOUT = 10000;						//请求服务端的超时时间
 	
 	private int clientPort;									//客户端端口
 															
@@ -30,6 +30,11 @@ public class LFTPClient implements Runnable {
 	private DatagramPacket datagramPacket = null;			//Packet
 	
 	private byte[] rcvBuffer;								//接受缓冲区
+	
+	String command;
+	StringBuilder ins;
+	InetAddress address;
+	StringBuilder largeFile;
 	
 	//客户端构造函数
 	public LFTPClient(int port) {
@@ -45,6 +50,7 @@ public class LFTPClient implements Runnable {
 		}
 	}
 	
+	//LFTP lsend 120.77.206.16 d:/hah.jpg
 	//客户端线程运行函数
 	public void run() {
 		
@@ -52,14 +58,13 @@ public class LFTPClient implements Runnable {
 			
 			try {
 				//获取用户指令,lsend or lget
-				System.out.println("please input command");
-				String command = br.readLine();
-				StringBuilder ins = new StringBuilder("");
-				InetAddress address = InetAddress.getByName("127.0.0.1");
-				StringBuilder largeFile = new StringBuilder("");
+				System.out.println("Client: please input command");
+				command = br.readLine();
+				ins = new StringBuilder("");
+				address = InetAddress.getByName("127.0.0.1");
+				largeFile = new StringBuilder("");
 				
-				if(commandAnalyze(command,ins,address,largeFile)) {
-					
+				if(commandAnalyze()) {
 					//向服务器发送文件命令
 					if (ins.toString().equals("lsend")) {
 						
@@ -105,7 +110,7 @@ public class LFTPClient implements Runnable {
 						
 						String fileName = largeFile.toString();
 						//关于接受文件命令以及文件名字的数据包, 设置RcvWindow
-						int rcvWindow = 1000;
+						int rcvWindow = 100;
 						Packet packet = new Packet(fileName.getBytes(), Packet.PacketType.LGET, rcvWindow);
 						byte[] packetBytes = packet.getPacketBytes();
 						
@@ -117,25 +122,42 @@ public class LFTPClient implements Runnable {
 						rcvBuffer = new byte[MAX_LENGTH];
 						datagramPacket = new DatagramPacket(rcvBuffer, rcvBuffer.length);
 						datagramSocket.receive(datagramPacket);
-						packet = new Packet(datagramPacket.getData());
-						int dataPort = packet.getDataPort();
 						
+						
+						//解析数据报信息
+						packet = new Packet(datagramPacket.getData());
+						//收到REJECT数据报，输出提示信息
+						if (packet.getPacketType() == PacketType.REJECT) {
+							System.out.println("Client: File does not exist");
+							continue;
+						}
+						
+						
+						int dataPort = packet.getDataPort();
+						System.out.println("Client: receive allocated dataPort: " + dataPort);
 						
 						//设置存储路径
 						String filePath = "d:/ClientStorage/" + fileName;
-						//发送一个数据包缓冲
+						
+						//发送一个数据包缓冲,并将客户端的数据端口与服务器的数据端口地址绑定
+						byte[] buf = new byte[4];
+						datagramPacket = new DatagramPacket(buf, buf.length,address,dataPort);
 						datagramSocket.send(datagramPacket);
 						
 						
+						System.out.println("Client: Send a buffer packet");
+						
+						System.out.println("Client: Ready to receive a file");
 						//构造数据传输接受类
 						DataReceiver dataReceiver = new DataReceiver(filePath, datagramSocket, address, dataPort, rcvWindow);
-						dataReceiver.start();
+						dataReceiver.start(true);
 						
 					}
 					
 					
 				} else if (command.equals("exit")){
 					//退出客户端
+					System.out.println("Thanks for using");
 					break;
 				} else {
 
@@ -144,16 +166,14 @@ public class LFTPClient implements Runnable {
 				}
 				
 			} catch(FileNotFoundException e) {
-				System.out.println("File not Found\n"
-						+ "please input the command again");
+				System.out.println("Client: File not Found");
 				
 			} catch(SocketTimeoutException e) {
-				System.out.println("Timeout,please try inputing the command again");
+				System.out.println("Client: Timeout,please try inputing the command again");
 				
 			}catch(NoSuchFileException e) {
-				System.out.println("File not Found\n"
-						+ "please input the command again");
-			}catch(IOException e) {
+				System.out.println("Client: File not Found");
+			}catch(Exception e) {
 				e.printStackTrace();
 				
 			}
@@ -169,7 +189,7 @@ public class LFTPClient implements Runnable {
 	}
 	
 	//命令分析
-	public boolean commandAnalyze(String command,StringBuilder ins,InetAddress address,StringBuilder largeFile) {
+	public boolean commandAnalyze() {
 		
 		if (command.equals("exit")) return false;
 		
@@ -178,31 +198,32 @@ public class LFTPClient implements Runnable {
 		
 		//判断是否为规范的命令
 		if (arr.length < 4) {
-			System.out.println("please input correct format of command\n"
+			System.out.println("Client: please input correct format of command\n"
 					+ "like LFTP ins myserver largeFile");
 			return false;
 		}
 		
 		
 		if (!arr[0].equals("LFTP")) {
-			System.out.println("please input correct format of command\n"
+			System.out.println("Client: please input correct format of command\n"
 					+ "like LFTP ins myserver largeFile");
 			
 			return false;
 		}
 		
 		if (!arr[1].equals("lsend") && !arr[1].equals("lget")) {
-			System.out.println("Incorrect instruction\n"
+			System.out.println("Client: Incorrect instruction\n"
 					+ "Correct instructions:lsend or lget");
 			return false;
 		}
 		ins.append(arr[1]);
 		
 		try{
+			
 			address = InetAddress.getByName(arr[2]);
 			
 		} catch(UnknownHostException e) {
-			System.out.println("Incorrest address");
+			System.out.println("Client: Incorrest address");
 			return false;
 		}
 		
